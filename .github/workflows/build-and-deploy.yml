@@ -1,0 +1,75 @@
+name: Build and Deploy to Lua Branch
+
+on:
+  push:
+    branches:
+      - typescript-main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript and create association file
+        run: |
+          # Création du fichier d'association avant la compilation
+          echo "{" > file_associations.json
+          first=true
+          for ts_file in $(find src -name "*.ts"); do
+            if [ "$first" = true ]; then
+              first=false
+            else
+              echo "," >> file_associations.json
+            fi
+            relative_path=${ts_file#src/}
+            lua_path=${relative_path%.ts}.lua
+            echo "  \"$lua_path\": \"${relative_path%/*}\"" >> file_associations.json
+          done
+          echo "}" >> file_associations.json
+          
+          # Construction du projet
+          npm run build
+          ls -la
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Setup Lua branch
+        run: |
+          git fetch origin lua || true
+          git checkout -b lua
+          # Garder uniquement build/ et file_associations.json
+          find . -mindepth 1 -maxdepth 1 ! -name 'build' ! -name 'file_associations.json' ! -name '.git' -exec rm -rf {} +
+
+      - name: Create directory structure and move files
+        run: |
+          jq -r 'to_entries[] | "\(.key) \(.value)"' file_associations.json | while read target _; do
+            src="build/$(basename "$target")"
+            dst="$target"
+            if [ -f "$src" ]; then
+              mkdir -p "$(dirname "$dst")"
+              mv "$src" "$dst"
+            else
+              echo "❌ Fichier introuvable: $src"
+            fi
+          done
+
+          rm -rf file_associations.json build
+          
+          git add .
+          git commit -m "Update Lua files from typescript-main" || echo "No changes to commit"
+          git push -f origin lua
