@@ -121,6 +121,11 @@ export class MonitorFramer {
 		if (this.context.frames.length === 0) return;
 
 		for (const frame of this.context.frames) {
+			if (frame.needToDraw()) {
+				frame.draw();
+			}
+			if (frame.getElements().length === 0) continue;
+
 			frame.drawElements(false);
 
 			for (const element of frame.getElements()) {
@@ -224,6 +229,10 @@ export class Frame {
 
 	public markDrawn() {
 		this.context.toDraw = false;
+	}
+
+	public markRedraw() {
+		this.context.toDraw = true;
 	}
 
 	public getWidth() {
