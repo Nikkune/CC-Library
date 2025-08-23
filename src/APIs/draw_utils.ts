@@ -17,7 +17,8 @@ interface TextDrawParams {
 	x2?: number;
 	y2?: number;
 	text: string;
-	color?: Color;
+	textColor?: Color;
+	backgroundColor?: Color;
 	alignment: TextAlignment;
 }
 
@@ -62,9 +63,10 @@ export class MonitorDrawer {
 		monitor.setBackgroundColor(oldBackgroundColor);
 	}
 
-	private writeTextToMonitor(x: number, y: number, text: string, color: Color) {
+	private writeTextToMonitor(x: number, y: number, text: string, textColor: Color, backgroundColor: Color) {
 		const monitor = this.validateMonitor();
-		monitor.setTextColor(color);
+		monitor.setBackgroundColor(backgroundColor);
+		monitor.setTextColor(textColor);
 		monitor.setCursorPos(x, y);
 		monitor.write(text);
 	}
@@ -77,8 +79,8 @@ export class MonitorDrawer {
 
 		this.withPreservedColor(monitor, () => {
 			monitor.setBackgroundColor(color);
-			for (let i = bounds.y1; i <= bounds.y2; i++) {
-				monitor.setCursorPos(x, y + i);
+			for (let yy = bounds.y1; yy < bounds.y2; yy++) {
+				monitor.setCursorPos(x, yy);
 				monitor.write(string.rep(' ', bounds.x2 - bounds.x1 + 1));
 			}
 		});
@@ -89,23 +91,46 @@ export class MonitorDrawer {
 		const bounds = this.calculateBounds(x, y, width, height);
 
 		this.withPreservedColor(monitor, () => {
-			for (let i = bounds.y1; i <= bounds.y2; i++) {
-				monitor.setCursorPos(x, y + i);
+			// Top border
+			monitor.setCursorPos(bounds.x1, bounds.y1);
+			monitor.setBackgroundColor(borderColor);
+			monitor.write(' '.repeat(bounds.x2 - bounds.x1 + 1));
+
+			// Middle (left border + fill + right border)
+			for (let yy = bounds.y1 + 1; yy <= bounds.y2 - 1; yy++) {
+				monitor.setCursorPos(bounds.x1, yy);
+				// left border
 				monitor.setBackgroundColor(borderColor);
 				monitor.write(' ');
-				monitor.setBackgroundColor(backgroundColor);
-				monitor.write(string.rep(' ', bounds.x2 - bounds.x1 - 1));
+
+				// fill
+				if (bounds.x2 > bounds.x1 + 1) {
+					monitor.setBackgroundColor(backgroundColor);
+					monitor.write(' '.repeat(bounds.x2 - bounds.x1 - 1));
+				}
+
+				// right border
+				if (bounds.x2 > bounds.x1) {
+					monitor.setBackgroundColor(borderColor);
+					monitor.write(' ');
+				}
+			}
+
+			// Bottom border
+			if (bounds.y2 > bounds.y1) {
+				monitor.setCursorPos(bounds.x1, bounds.y2);
 				monitor.setBackgroundColor(borderColor);
-				monitor.write(' ');
+				monitor.write(' '.repeat(bounds.x2 - bounds.x1 + 1));
 			}
 		});
 	}
 
 	public drawText(params: TextDrawParams) {
-		const color = params.color || colors.white;
+		const textColor = params.textColor || colors.white;
+		const backgroundColor = params.backgroundColor || colors.black;
 
 		if (params.alignment === TextAlignment.NORMAL) {
-			this.writeTextToMonitor(params.x1, params.y1, params.text, color);
+			this.writeTextToMonitor(params.x1, params.y1, params.text, textColor, backgroundColor);
 			return;
 		}
 
@@ -122,6 +147,7 @@ export class MonitorDrawer {
 		if (params.alignment === TextAlignment.CENTER ||
 			params.alignment === TextAlignment.HORIZONTAL) {
 			x = math_utils.lerp(bounds.x1, bounds.x2, 0.5);
+			x = x - math.floor(params.text.length / 2);
 		}
 
 		if (params.alignment === TextAlignment.CENTER ||
@@ -129,6 +155,6 @@ export class MonitorDrawer {
 			y = math_utils.lerp(bounds.y1, bounds.y2, 0.5);
 		}
 
-		this.writeTextToMonitor(x, y, params.text, color);
+		this.writeTextToMonitor(x, y, params.text, textColor, backgroundColor);
 	}
 }
