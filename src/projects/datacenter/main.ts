@@ -232,4 +232,4 @@ monitor.setCursorPos(2, 4);
 monitor.write(string.rep(' ', monitorWidth - 2));
 monitor.setBackgroundColor(colors.black);
 
-parallel.waitForAny(monitorFramer.loop, messageLookUp);
+parallel.waitForAny(() => monitorFramer.loop, messageLookUp);
