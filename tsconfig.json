@@ -11,8 +11,7 @@
     "tstl": {
         "luaTarget": "CC-5.2",
         "luaLibImport": "inline",
-        "noImplicitGlobalVariables": true,
-        "noImplicitSelf": true
+        "noImplicitGlobalVariables": true
     },
     "include": [
         "./src/**/*.ts"
