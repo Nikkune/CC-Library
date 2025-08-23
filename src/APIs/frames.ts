@@ -1,11 +1,13 @@
 import * as draw_utils from './draw_utils';
+import {MonitorDrawer} from './draw_utils';
 import * as math_utils from './math_utils';
 
 interface FramesContext {
 	monitor: MonitorPeripheral | null,
 	last_refresh: number,
 	refresh_rate: number,
-	frames: Frame[]
+	frames: Frame[],
+	drawer: MonitorDrawer,
 }
 
 interface FrameParams {
@@ -39,27 +41,35 @@ interface ElementContext {
 const MONITOR_ERROR = 'Monitor not found. Please set it with MonitorDrawer.setMonitor(monitor)';
 
 export class MonitorFramer {
-	private static context: FramesContext = {
+	private context: FramesContext = {
 		monitor: null,
 		last_refresh: 0,
 		refresh_rate: 1,
 		frames: [],
+		drawer: draw_utils.MonitorDrawer.getInstance(),
 	};
 
-	public static setMonitor(monitor: MonitorPeripheral): void {
+	private static instance: MonitorFramer;
+
+	public static getInstance(): MonitorFramer {
+		if (!this.instance) this.instance = new MonitorFramer();
+		return this.instance;
+	}
+
+	public setMonitor(monitor: MonitorPeripheral): void {
 		this.context.monitor = monitor;
 	}
 
-	private static validateMonitor(): MonitorPeripheral {
+	private validateMonitor(): MonitorPeripheral {
 		if (!this.context.monitor) error(MONITOR_ERROR);
 		return this.context.monitor;
 	}
 
-	public static setRefreshRate(rate: number): void {
+	public setRefreshRate(rate: number): void {
 		this.context.refresh_rate = rate;
 	}
 
-	public static clearMonitor(backgroundColor?: Color) {
+	public clearMonitor(backgroundColor?: Color) {
 		const monitor = this.validateMonitor();
 		const color = backgroundColor || colors.black;
 
@@ -67,7 +77,7 @@ export class MonitorFramer {
 		monitor.clear();
 	}
 
-	public static create(x: number, y: number, width: number, height: number, params?: FrameParams): Frame {
+	public create(x: number, y: number, width: number, height: number, params?: FrameParams): Frame {
 		this.validateMonitor();
 
 		const frameContext: FrameContext = {
@@ -83,14 +93,14 @@ export class MonitorFramer {
 			toDraw: true,
 		};
 
-		const frame = new Frame(frameContext, this.validateMonitor());
+		const frame = new Frame(frameContext, this.validateMonitor(), this.context.drawer);
 
 		this.context.frames.push(frame);
 
 		return frame;
 	}
 
-	public static drawAll() {
+	public drawAll() {
 		if (this.context.frames.length === 0) return;
 		this.validateMonitor();
 
@@ -107,7 +117,7 @@ export class MonitorFramer {
 		}
 	}
 
-	public static refreshAll(deltaTime: number) {
+	public refreshAll(deltaTime: number) {
 		if (this.context.frames.length === 0) return;
 
 		for (const frame of this.context.frames) {
@@ -121,7 +131,7 @@ export class MonitorFramer {
 		}
 	}
 
-	public static loop() {
+	public loop() {
 		this.validateMonitor();
 
 		let lastTime = os.clock();
@@ -142,14 +152,16 @@ export class MonitorFramer {
 export class Frame {
 	private context: FrameContext;
 	private readonly monitor: MonitorPeripheral;
+	private drawer: MonitorDrawer;
 
-	constructor(context: FrameContext, monitor: MonitorPeripheral) {
+	constructor(context: FrameContext, monitor: MonitorPeripheral, drawer: MonitorDrawer) {
 		this.context = context;
 		this.monitor = monitor;
+		this.drawer = drawer;
 	}
 
 	public draw() {
-		draw_utils.MonitorDrawer.setMonitor(this.monitor);
+		this.drawer.setMonitor(this.monitor);
 		const [monitorWidth, monitorHeight] = this.monitor.getSize();
 
 		// Draw the frame's gap
@@ -157,10 +169,10 @@ export class Frame {
 		const gapY1 = math_utils.clamp(this.context.y - 1, 1, monitorHeight);
 		const gapX2 = math_utils.clamp(this.context.x + this.context.width, 1, monitorWidth);
 		const gapY2 = math_utils.clamp(this.context.y + this.context.height, 1, monitorHeight);
-		draw_utils.MonitorDrawer.drawFilledRect(gapX1, gapY1, gapX2, gapY2, this.context.gapColor);
+		this.drawer.drawFilledRect(gapX1, gapY1, gapX2, gapY2, this.context.gapColor);
 
 		// Draw the frame's border and body
-		draw_utils.MonitorDrawer.drawBorderedRect(this.context.x, this.context.y, this.context.width - 1, this.context.height - 1, this.context.borderColor, this.context.fillColor);
+		this.drawer.drawBorderedRect(this.context.x, this.context.y, this.context.width - 1, this.context.height - 1, this.context.borderColor, this.context.fillColor);
 
 		// Draw the frame's title
 		if (this.context.title) {
