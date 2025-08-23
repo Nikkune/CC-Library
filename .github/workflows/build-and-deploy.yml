@@ -22,26 +22,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build TypeScript and create association file
-        run: |
-          # Création du fichier d'association avant la compilation
-          echo "{" > file_associations.json
-          first=true
-          for ts_file in $(find src -name "*.ts"); do
-            if [ "$first" = true ]; then
-              first=false
-            else
-              echo "," >> file_associations.json
-            fi
-            relative_path=${ts_file#src/}
-            lua_path=${relative_path%.ts}.lua
-            echo "  \"$lua_path\": \"${relative_path%/*}\"" >> file_associations.json
-          done
-          echo "}" >> file_associations.json
-          
-          # Construction du projet
-          npm run build
-          ls -la
+      - name: Build TypeScript
+        run: npm run build
 
       - name: Configure Git
         run: |
@@ -52,23 +34,13 @@ jobs:
         run: |
           git fetch origin lua || true
           git checkout -b lua
-          # Garder uniquement build/ et file_associations.json
-          find . -mindepth 1 -maxdepth 1 ! -name 'build' ! -name 'file_associations.json' ! -name '.git' -exec rm -rf {} +
+          # Garder uniquement le dossier build/
+          find . -mindepth 1 -maxdepth 1 ! -name 'build' ! -name '.git' -exec rm -rf {} +
 
-      - name: Create directory structure and move files
+      - name: Move build files to root
         run: |
-          jq -r 'to_entries[] | "\(.key) \(.value)"' file_associations.json | while read target _; do
-            src="build/$(basename "$target")"
-            dst="$target"
-            if [ -f "$src" ]; then
-              mkdir -p "$(dirname "$dst")"
-              mv "$src" "$dst"
-            else
-              echo "❌ Fichier introuvable: $src"
-            fi
-          done
-
-          rm -rf file_associations.json build
+          mv build/* .
+          rmdir build
           
           git add .
           git commit -m "Update Lua files from typescript-main" || echo "No changes to commit"
