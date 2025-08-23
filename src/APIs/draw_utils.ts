@@ -24,20 +24,27 @@ interface TextDrawParams {
 const MONITOR_ERROR = 'Monitor not found. Please set it with MonitorDrawer.setMonitor(monitor)';
 
 export class MonitorDrawer {
-	private static context: DrawContext = {
+	private context: DrawContext = {
 		monitor: null,
 	};
 
-	public static setMonitor(monitor: MonitorPeripheral): void {
+	private static instance: MonitorDrawer;
+
+	public static getInstance(): MonitorDrawer {
+		if (!this.instance) this.instance = new MonitorDrawer();
+		return this.instance;
+	}
+
+	public setMonitor(monitor: MonitorPeripheral): void {
 		this.context.monitor = monitor;
 	}
 
-	private static validateMonitor(): MonitorPeripheral {
+	private validateMonitor(): MonitorPeripheral {
 		if (!this.context.monitor) error(MONITOR_ERROR);
 		return this.context.monitor;
 	}
 
-	private static calculateBounds(x: number, y: number, width: number, height: number) {
+	private calculateBounds(x: number, y: number, width: number, height: number) {
 		const monitor = this.validateMonitor();
 		const [monitorWidth, monitorHeight] = monitor.getSize();
 
@@ -49,20 +56,20 @@ export class MonitorDrawer {
 		};
 	}
 
-	private static withPreservedColor(monitor: MonitorPeripheral, action: () => void) {
+	private withPreservedColor(monitor: MonitorPeripheral, action: () => void) {
 		const oldBackgroundColor = monitor.getBackgroundColor();
 		action();
 		monitor.setBackgroundColor(oldBackgroundColor);
 	}
 
-	private static writeTextToMonitor(x: number, y: number, text: string, color: Color) {
+	private writeTextToMonitor(x: number, y: number, text: string, color: Color) {
 		const monitor = this.validateMonitor();
 		monitor.setTextColor(color);
 		monitor.setCursorPos(x, y);
 		monitor.write(text);
 	}
 
-	public static drawFilledRect(x: number, y: number, width: number, height: number, color: Color) {
+	public drawFilledRect(x: number, y: number, width: number, height: number, color: Color) {
 		const monitor = this.validateMonitor();
 		const bounds = this.calculateBounds(x, y, width, height);
 
@@ -77,7 +84,7 @@ export class MonitorDrawer {
 		});
 	}
 
-	public static drawBorderedRect(x: number, y: number, width: number, height: number, borderColor: Color, backgroundColor: Color) {
+	public drawBorderedRect(x: number, y: number, width: number, height: number, borderColor: Color, backgroundColor: Color) {
 		const monitor = this.validateMonitor();
 		const bounds = this.calculateBounds(x, y, width, height);
 
@@ -94,7 +101,7 @@ export class MonitorDrawer {
 		});
 	}
 
-	public static drawText(params: TextDrawParams) {
+	public drawText(params: TextDrawParams) {
 		const color = params.color || colors.white;
 
 		if (params.alignment === TextAlignment.NORMAL) {

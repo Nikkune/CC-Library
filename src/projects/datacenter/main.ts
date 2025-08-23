@@ -34,12 +34,15 @@ rednet.open(peripheral.getName(modem));
 
 const yOffset = 6;
 
-framer.MonitorFramer.setMonitor(monitor);
-draw_utils.MonitorDrawer.setMonitor(monitor);
-framer.MonitorFramer.clearMonitor();
+const monitorFramer = framer.MonitorFramer.getInstance();
+const drawer = draw_utils.MonitorDrawer.getInstance();
 
-const gatewaysFrame = framer.MonitorFramer.create(2, yOffset, (monitorWidth / 3) * 2 - 2, monitorHeight - yOffset, {borderColor: colors.cyan, title: 'Gateways'});
-const logFrame = framer.MonitorFramer.create((monitorWidth / 3) * 2 + 1, yOffset, (monitorWidth / 3) - 1, monitorHeight - yOffset, {borderColor: colors.blue, title: 'Logs'});
+monitorFramer.setMonitor(monitor);
+drawer.setMonitor(monitor);
+monitorFramer.clearMonitor();
+
+const gatewaysFrame = monitorFramer.create(2, yOffset, (monitorWidth / 3) * 2 - 2, monitorHeight - yOffset, {borderColor: colors.cyan, title: 'Gateways'});
+const logFrame = monitorFramer.create((monitorWidth / 3) * 2 + 1, yOffset, (monitorWidth / 3) - 1, monitorHeight - yOffset, {borderColor: colors.blue, title: 'Logs'});
 
 const gateways: Gateway[] = [];
 
@@ -154,8 +157,8 @@ function createElements() {
 						}
 
 						const screenPosition = frame.toScreenCoords(this.params.x, this.params.y);
-						draw_utils.MonitorDrawer.drawFilledRect(screenPosition.x, screenPosition.y, this.params.width, this.params.height, color);
-						draw_utils.MonitorDrawer.drawText({text: label, alignment: TextAlignment.CENTER, x1: screenPosition.x, y1: screenPosition.y, x2: screenPosition.x + this.params.width, y2: screenPosition.y + this.params.height});
+						drawer.drawFilledRect(screenPosition.x, screenPosition.y, this.params.width, this.params.height, color);
+						drawer.drawText({text: label, alignment: TextAlignment.CENTER, x1: screenPosition.x, y1: screenPosition.y, x2: screenPosition.x + this.params.width, y2: screenPosition.y + this.params.height});
 					},
 					refresh(frame: Frame, deltaTime: number) {
 						this.params.lastBlink = (this.params.lastBlink || 0) + deltaTime;
@@ -229,4 +232,4 @@ monitor.setCursorPos(2, 4);
 monitor.write(string.rep(' ', monitorWidth - 2));
 monitor.setBackgroundColor(colors.black);
 
-parallel.waitForAny(framer.MonitorFramer.loop, messageLookUp);
+parallel.waitForAny(monitorFramer.loop, messageLookUp);
