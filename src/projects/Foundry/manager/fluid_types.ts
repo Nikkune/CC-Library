@@ -1,14 +1,23 @@
 import {UnitOfMeasure} from './fluid_enums';
-import {ItemResource}  from './item_types';
+import {FluidRegistry} from './fluid_registry';
+import {MeltableItems} from './item_registry';
 
-export type UnitOfMeasureType = typeof UnitOfMeasure[keyof typeof UnitOfMeasure];
+//@ts-ignore
+export type FluidKey = keyof typeof FluidRegistry;
+
+export interface AlloyingRecipe {
+	//@ts-ignore
+	readonly ingredientsNeeded: readonly FluidKey[];
+	readonly quantityNeeded: readonly number[];
+	readonly quantityProduced: number;
+}
 
 export interface FluidResource {
-	availableUnits: UnitOfMeasureType[];
-	packageable: boolean;
-	obtentionMethods?: {
-		alloying?: { ingredientsNeeded: FluidResource[]; };
-		melting?: { ingredientsAccepted: ItemResource[]; };
+	readonly availableUnits: readonly (keyof typeof UnitOfMeasure)[];
+	readonly shouldKeep: boolean;
+	readonly obtentionMethods?: {
+		readonly alloying?: readonly AlloyingRecipe[];
+		readonly melting?: readonly (keyof typeof MeltableItems)[];
 	};
 }
 

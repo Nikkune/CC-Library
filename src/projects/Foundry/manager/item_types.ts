@@ -1,7 +1,11 @@
-import {FluidResource} from './fluid_types';
+import {FluidRegistry} from './fluid_registry';
+
+export type MeltableItemsType = {
+	readonly [K: string]: ItemResource;
+};
 
 export interface ItemResource {
 	shouldBeAutomaticallyMelted: boolean;
-	fluidResource: FluidResource;
+	fluidResource: (keyof typeof FluidRegistry);
 	fluidAmountAfterMelting: number;
 }
