@@ -1,7 +1,8 @@
-import * as draw_utils  from '../../APIs/draw_utils';
-import {TextAlignment}  from '../../APIs/draw_utils';
-import * as framer      from '../../APIs/frames';
-import {Element, Frame} from '../../APIs/frames';
+import * as draw_utils  from '../../../APIs/draw_utils';
+import {TextAlignment}  from '../../../APIs/draw_utils';
+import * as framer      from '../../../APIs/frames';
+import {Element, Frame} from '../../../APIs/frames';
+import {RednetHelper, SendType} from '../../../APIs/rednet_utils';
 
 /** -------------------- TYPES & ENUMS -------------------- **/
 
@@ -53,7 +54,7 @@ const CONFIG = {
  */
 class GatewayMonitor {
 	private monitor: MonitorPeripheral;
-	private modem: ModemPeripheral;
+	private rednetHelper: RednetHelper;
 	private readonly monitorFramer: framer.MonitorFramer;
 	private readonly drawer: draw_utils.MonitorDrawer;
 	private readonly gateways: Gateway[] = [];
@@ -78,9 +79,9 @@ class GatewayMonitor {
 	 */
 	private initializePeripherals(): void {
 		this.monitor = peripheral.wrap(CONFIG.PERIPHERALS.MONITOR_SIDE) as MonitorPeripheral || error('No monitor found');
-		this.modem = peripheral.wrap(CONFIG.PERIPHERALS.MODEM_SIDE) as ModemPeripheral || error('No modem found');
+		const modem = peripheral.wrap(CONFIG.PERIPHERALS.MODEM_SIDE) as ModemPeripheral || error('No modem found');
+		this.rednetHelper = new RednetHelper(modem);
 		this.monitor.setTextScale(CONFIG.DISPLAY.TEXT_SCALE);
-		rednet.open(peripheral.getName(this.modem));
 	}
 
 	/**
@@ -167,7 +168,22 @@ class GatewayMonitor {
 		this.createLogElements();
 		print('To send a message to the datacenter');
 		print('Use the id : ' + tostring(os.getComputerID()));
-		parallel.waitForAny(() => this.monitorFramer.loop(), () => this.messageLookUp());
+
+		parallel.waitForAny(() => this.monitorFramer.loop(), async () => await this.messageLoop());
+	}
+
+
+	private async messageLoop(): Promise<void> {
+		while (true) {
+			this.rednetHelper.tick();
+			const [senderId, message] = rednet.receive(null, 0.1);
+			if (senderId && message?.type === 'status_update' && message.payload?.name) {
+				const { name, status, message: msg } = message.payload;
+				this.handleGatewayUpdate(name, status, msg);
+			}
+			this.checkGatewaysStatus();
+			this.createElements();
+		}
 	}
 
 	/**
@@ -195,23 +211,6 @@ class GatewayMonitor {
 		} else {
 			this.addLog(`New ${gatewayName} detected !`);
 			this.gateways.push({name: gatewayName, status, lastSeen: currentTime, message: null});
-		}
-	}
-
-	/**
-	 * Continuously listens for incoming messages, processes status updates,
-	 * checks the status of gateways, and creates the necessary elements.
-	 *
-	 * @return {void} Does not return a value. Executes operations as part of its loop.
-	 */
-	private messageLookUp(): void {
-		while (true) {
-			const [id, message] = rednet.receive(null, 0.1);
-			if (id && message.type === 'status_update' && message.name) {
-				this.handleGatewayUpdate(message.name, message.status, message.message);
-			}
-			this.checkGatewaysStatus();
-			this.createElements();
 		}
 	}
 
