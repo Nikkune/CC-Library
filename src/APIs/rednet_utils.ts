@@ -1,4 +1,4 @@
-export type SendType = 'action' | 'request' | 'response' | 'status_update';
+export type SendType = 'action' | 'request' | 'ping' | 'pong' | 'state_update' | 'response' | 'status_update';
 
 export interface PendingRequest {
 	id: number;
@@ -75,6 +75,24 @@ export class RednetHelper {
 					this.pendingRequests.splice(idx, 1);
 				}
 			}
+
+			if (message.type === 'ping') {
+				rednet.send(senderId, {
+					type: 'pong',
+					payload: {
+						id: message.payload.id,
+					},
+				});
+			}
+
+			if (message.type === 'pong' && message.payload?.id) {
+				const idx = this.pendingRequests.findIndex(r => r.id === message.payload.id);
+				if (idx >= 0) {
+					const request = this.pendingRequests[idx];
+					request.resolve(true);
+					this.pendingRequests.splice(idx, 1);
+				}
+			}
 		}
 
 		// Check for request timeouts
@@ -85,6 +103,29 @@ export class RednetHelper {
 				this.pendingRequests.splice(i, 1);
 			}
 		}
+	}
+
+	// =============================
+	// Send a ping and wait for a pong
+	// =============================
+	public ping(target: number, timeout?: number): Promise<boolean> {
+		timeout = timeout ?? 2;
+		return new Promise((resolve, reject) => {
+			const requestId = math.random(1, 1e6);
+			this.pendingRequests.push({
+				id: requestId,
+				resolve,
+				reject,
+				timeout: os.clock() + timeout!,
+			});
+
+			rednet.send(target, {
+				type: 'ping',
+				payload: {
+					id: requestId,
+				},
+			});
+		});
 	}
 
 	// =============================
