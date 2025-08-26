@@ -1,11 +1,17 @@
-import {FluidRegistry} from './fluid_registry';
+import {FluidKey}      from './fluid_types';
+import {MeltableItems} from './item_registry';
 
-export type MeltableItemsType = {
-	readonly [K: string]: ItemResource;
-};
+//@ts-ignore
+export type ItemKey = keyof typeof MeltableItems;
 
 export interface ItemResource {
 	shouldBeAutomaticallyMelted: boolean;
-	fluidResource: (keyof typeof FluidRegistry);
+	//@ts-ignore
+	fluidResource: FluidKey;
 	fluidAmountAfterMelting: number;
+}
+
+export interface ItemsDetails {
+	itemName: ItemKey;
+	itemAmount: number;
 }

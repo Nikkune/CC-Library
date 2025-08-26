@@ -1,137 +1,139 @@
-export type SendType = 'action' | 'request' | 'ping' | 'pong' | 'state_update' | 'response' | 'status_update';
-
-export interface PendingRequest {
-	id: number;
-	resolve: (info: any) => void;
-	reject: () => void;
-	timeout: number;
+export type SendKey = keyof typeof SendType;
+type Handler<TRequest = any, TResponse = any> = (sender: number, payload: TRequest) => TResponse | Promise<TResponse>;
+type RequestOf<K extends SendKey> = (typeof SendType)[K]['request'];
+type ResponseOf<K extends SendKey> = (typeof SendType)[K]['response'];
+type PendingRequest = {
+	callback: (msg: any) => void,
+	expiresAt: number,
 }
 
-export class RednetHelper {
-	private pendingRequests: PendingRequest[] = [];
+const SendType = {
+	ping: {
+		request: {} as {},
+		response: {} as { pong: true },
+	},
+	get: {
+		request: {} as { resource: string },
+		response: {} as unknown,
+	},
+	put: {
+		request: {} as { resource: string; data: any },
+		response: {} as { ok: boolean, data?: unknown },
+	},
+} as const;
+
+export class RednetSenderHelper {
+	private currentId = 0;
+	private pending: Map<number, PendingRequest> = new Map();
 
 	constructor(modem: ModemPeripheral) {
-		rednet.open(peripheral.getName(modem)); // Open the modem for rednet communication
+		rednet.open(peripheral.getName(modem));
 	}
 
-	// =============================
-	// Get the current pending requests
-	// =============================
-	public getPendingRequests(): PendingRequest[] {
-		return [...this.pendingRequests]; // Return a copy to avoid direct mutation
-	}
+	public listen() {
+		(async () => {
+			while (true) {
+				const [sender, msg] = rednet.receive();
+				const now = os.clock() * 1000;
 
-	// =============================
-	// Send a simple message
-	// =============================
-	public sendMessage(target: number, type: SendType, data?: any) {
-		rednet.send(target, {
-			type,
-			payload: data,
-		});
-	}
+				// Supprimer les requêtes expirées
+				for (const [id, req] of this.pending) {
+					if (req.expiresAt <= now) {
+						this.pending.delete(id);
+					}
+				}
 
-	// =============================
-	// Send a request and wait for a response
-	// =============================
-	public requestInfo(target: number, data: any, timeout?: number): Promise<any> {
-		timeout = timeout ?? 2;
-		const requestId = math.random(1, 1e6);
-
-		return new Promise((resolve, reject) => {
-			// Store the pending request
-			this.pendingRequests.push({
-				id: requestId,
-				resolve,
-				reject,
-				timeout: os.clock() + timeout!,
-			});
-
-			// Send the request
-			rednet.send(target, {
-				type: 'request',
-				payload: {
-					id: requestId,
-					...data,
-				},
-			});
-		});
-	}
-
-	// =============================
-	// Handle incoming messages and responses
-	// =============================
-	public handleMessages() {
-		while (true) {
-			const [senderId, message, protocol] = rednet.receive(null, 0.1);
-			if (!message) break;
-
-			// Handle response messages
-			if (message.type === 'response' && message.payload?.id) {
-				const idx = this.pendingRequests.findIndex(r => r.id === message.payload.id);
-				if (idx >= 0) {
-					const request = this.pendingRequests[idx];
-					request.resolve(message.payload.info);
-					this.pendingRequests.splice(idx, 1);
+				// Dispatcher la réponse
+				if (this.pending.has(msg.id)) {
+					const req = this.pending.get(msg.id)!;
+					req.callback(msg.payload);
+					this.pending.delete(msg.id);
 				}
 			}
-
-			if (message.type === 'ping') {
-				rednet.send(senderId, {
-					type: 'pong',
-					payload: {
-						id: message.payload.id,
-					},
-				});
-			}
-
-			if (message.type === 'pong' && message.payload?.id) {
-				const idx = this.pendingRequests.findIndex(r => r.id === message.payload.id);
-				if (idx >= 0) {
-					const request = this.pendingRequests[idx];
-					request.resolve(true);
-					this.pendingRequests.splice(idx, 1);
-				}
-			}
-		}
-
-		// Check for request timeouts
-		const now = os.clock();
-		for (let i = this.pendingRequests.length - 1; i >= 0; i--) {
-			if (this.pendingRequests[i].timeout <= now) {
-				this.pendingRequests[i].reject();
-				this.pendingRequests.splice(i, 1);
-			}
-		}
+		})();
 	}
 
-	// =============================
-	// Send a ping and wait for a pong
-	// =============================
-	public ping(target: number, timeout?: number): Promise<boolean> {
-		timeout = timeout ?? 2;
-		return new Promise((resolve, reject) => {
-			const requestId = math.random(1, 1e6);
-			this.pendingRequests.push({
-				id: requestId,
-				resolve,
-				reject,
-				timeout: os.clock() + timeout!,
-			});
+	private nextId() {
+		return ++this.currentId;
+	}
 
-			rednet.send(target, {
-				type: 'ping',
-				payload: {
-					id: requestId,
+	async ping(target: number, timeout = 2000): Promise<{ pong: true }> {
+		const id = this.nextId();
+		const now = os.clock() * 1000;
+		return new Promise((resolve, reject) => {
+			this.pending.set(id, {
+				callback: (msg: { id: number; pong: true }) => {
+					this.pending.delete(id);
+					resolve(msg);
 				},
+				expiresAt: now + timeout,
 			});
+			rednet.send(target, {id, type: 'ping'});
 		});
 	}
 
-	// =============================
-	// Call this in the main loop
-	// =============================
-	public tick() {
-		this.handleMessages();
+	async get<T>(target: number, resource: string, timeout = 2000): Promise<T> {
+		const id = this.nextId();
+		const now = os.clock() * 1000;
+		return new Promise((resolve, reject) => {
+			this.pending.set(id, {
+				callback: (msg: T) => {
+					this.pending.delete(id);
+					resolve(msg);
+				},
+				expiresAt: now + timeout,
+			});
+
+			rednet.send(target, {id, type: 'get', payload: {resource}});
+		});
+	}
+
+	async put<T>(target: number, resource: string, data: object, timeout?: number): Promise<{ ok: boolean, data: T }>
+	async put(target: number, resource: string, data: object, timeout = 2000): Promise<{ ok: boolean }> {
+		const id = this.nextId();
+		const now = os.clock() * 1000;
+		return new Promise((resolve, reject) => {
+			this.pending.set(id, {
+				callback: (msg: { ok: boolean; data?: unknown }) => {
+					this.pending.delete(id);
+					resolve(msg);
+				},
+				expiresAt: now + timeout,
+			});
+			rednet.send(target, {id, type: 'put', payload: {resource, data}});
+		});
+	}
+}
+
+export class RednetReceiverHelper {
+	private handlers: Partial<Record<keyof typeof SendType, Handler>> = {};
+
+	constructor(modem: ModemPeripheral) {
+		rednet.open(peripheral.getName(modem));
+	}
+
+	// Enregistre un handler pour un type spécifique (ping, get, put)
+	on<K extends keyof typeof SendType>(type: K, handler: Handler<RequestOf<K>, ResponseOf<K>>) {
+		this.handlers[type] = handler;
+	}
+
+	public listen() {
+		(async () => {
+			while (true) {
+				const [sender, msg] = rednet.receive();
+
+				const { id, type, payload } = msg;
+				const handler = this.handlers[type as keyof typeof SendType];
+				if (!handler) continue; // pas de handler enregistré, on ignore
+
+				// Exécuter le handler (sync ou async)
+				const result = await handler(sender, payload);
+
+				// Envoyer la réponse si nécessaire
+				if (result !== undefined) {
+					rednet.send(sender, { id, payload: result });
+				}
+			}
+		})();
 	}
 }

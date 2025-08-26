@@ -1,28 +1,37 @@
-import {UnitOfMeasure}                from './fluid_enums';
-import {FluidResource, TankDetails}   from './fluid_types';
-import {ItemResource}                 from './item_types';
-import {SmelteryMode, SmelteryStatus} from './smeltery_enums';
+import {FluidKey, TankDetails, UnitMeasureType} from './fluid_types';
+import {ItemKey, ItemsDetails}                  from './item_types';
+import {SmelteryMode, SmelteryStatus}           from './smeltery_enums';
 
-export type CastType = { [K in keyof typeof UnitOfMeasure]: typeof UnitOfMeasure[K]['hasCast'] extends true ? K : never }[keyof typeof UnitOfMeasure]
 export type SmelteryAction = { [K in keyof SmelteryActionArgs]: { type: K } & SmelteryActionArgs[K] }[keyof SmelteryActionArgs];
 
 export type SmelteryActionArgs = {
-	INSERT_FLUID: { fluidResource: FluidResource; amount: number; };
-	EXTRACT_FLUID: { fluidResource: FluidResource; amount: number; };
-	INSERT_ITEM: { itemResource: ItemResource; amount: number; };
-	SEND_FLUID_WHEN_CHANGED: {};
-	CAST: { fluidResource: FluidResource; amount: number; castType: CastType; };
+	SEND_CURRENT_STATE: {};
+	WAIT_MELTING: {};
+	EJECT_ITEM: { itemName: ItemKey; amount: number; };
+	INSERT_ITEM: { itemName: ItemKey; amount: number; };
+	INSERT_FLUID: { fluidName: FluidKey; amount: number; };
+	EXTRACT_FLUID: { fluidName: FluidKey; amount: number; };
+	EXTRACT_ITEM: { itemName: ItemKey; amount: number; };
+	CAST: { fluidName: FluidKey; amount: number; castType: UnitMeasureType; };
 }
 
 export interface SmelteryState {
 	mode: SmelteryMode;
 	status: SmelteryStatus;
-	fluidCapacity: number;
-	fluidAmount: number;
-	fluidIn: FluidResource[];
-	itemCapacity: number;
-	itemAmount: number;
-	itemsIn: ItemResource[];
+	fluidInCapacity: number;
+	fluidInAmount: number;
+	fluidIn: TankDetails[];
+	itemInCapacity: number;
+	itemInAmount: number;
+	itemsIn: ItemKey[];
+	itemsToProcess: ItemsDetails[];
 	residueTanksCount: number;
 	residueTanksDetails: TankDetails[];
 }
+
+export type PlanedAction = {
+	action: SmelteryAction;
+	expectedState: Partial<SmelteryState>;
+}
+
+export type SmelteryActionBatch = PlanedAction[][]

@@ -1,5 +1,5 @@
-import {UnitOfMeasure}                   from './fluid_enums';
-import {ItemResource, MeltableItemsType} from './item_types';
+import {UnitOfMeasure} from './fluid_enums';
+import {ItemResource}  from './item_types';
 
 const LAPIS_VARIANT: ItemResource = {
 	shouldBeAutomaticallyMelted: true,

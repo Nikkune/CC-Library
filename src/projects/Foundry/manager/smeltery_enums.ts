@@ -8,6 +8,7 @@ export enum SmelteryMode {
 
 export enum SmelteryStatus {
 	IDLE,
+	PLANNING,
 	PROCESSING,
 	DONE,
 	ERROR,

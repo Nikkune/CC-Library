@@ -1,8 +1,8 @@
-import * as draw_utils  from '../../../APIs/draw_utils';
-import {TextAlignment}  from '../../../APIs/draw_utils';
-import * as framer      from '../../../APIs/frames';
-import {Element, Frame} from '../../../APIs/frames';
-import {RednetHelper, SendType} from '../../../APIs/rednet_utils';
+import * as draw_utils                                from '../../../APIs/draw_utils';
+import {TextAlignment}                                from '../../../APIs/draw_utils';
+import * as framer                                    from '../../../APIs/frames';
+import {Element, Frame}                               from '../../../APIs/frames';
+import {RednetReceiverHelper} from '../../../APIs/rednet_utils';
 
 /** -------------------- TYPES & ENUMS -------------------- **/
 
@@ -54,7 +54,7 @@ const CONFIG = {
  */
 class GatewayMonitor {
 	private monitor: MonitorPeripheral;
-	private rednetHelper: RednetHelper;
+	private rednetHelper: RednetReceiverHelper;
 	private readonly monitorFramer: framer.MonitorFramer;
 	private readonly drawer: draw_utils.MonitorDrawer;
 	private readonly gateways: Gateway[] = [];
@@ -80,7 +80,15 @@ class GatewayMonitor {
 	private initializePeripherals(): void {
 		this.monitor = peripheral.wrap(CONFIG.PERIPHERALS.MONITOR_SIDE) as MonitorPeripheral || error('No monitor found');
 		const modem = peripheral.wrap(CONFIG.PERIPHERALS.MODEM_SIDE) as ModemPeripheral || error('No modem found');
-		this.rednetHelper = new RednetHelper(modem);
+		this.rednetHelper = new RednetReceiverHelper(modem);
+
+		(this.rednetHelper as RednetReceiverHelper).on('put', (sender, payload) => {
+			const name = payload.resource;
+			this.handleGatewayUpdate(name, payload.data.status, payload.data.message);
+
+			return {ok: true};
+		});
+
 		this.monitor.setTextScale(CONFIG.DISPLAY.TEXT_SCALE);
 	}
 
@@ -172,17 +180,11 @@ class GatewayMonitor {
 		parallel.waitForAny(() => this.monitorFramer.loop(), async () => await this.messageLoop());
 	}
 
-
 	private async messageLoop(): Promise<void> {
 		while (true) {
-			this.rednetHelper.tick();
-			const [senderId, message] = rednet.receive(null, 0.1);
-			if (senderId && message?.type === 'status_update' && message.payload?.name) {
-				const { name, status, message: msg } = message.payload;
-				this.handleGatewayUpdate(name, status, msg);
-			}
 			this.checkGatewaysStatus();
 			this.createElements();
+			os.sleep(0.1);
 		}
 	}
 

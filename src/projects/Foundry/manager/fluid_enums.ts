@@ -35,4 +35,4 @@ export const UnitOfMeasure = {
 		costInMilliBucket: 1,
 		hasCast: false,
 	},
-} as const;
+} as const satisfies Record<string, {costInMilliBucket: number; hasCast: boolean}>;
