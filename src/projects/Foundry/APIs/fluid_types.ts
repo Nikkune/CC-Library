@@ -1,5 +1,5 @@
 import {UnitOfMeasure} from './fluid_enums';
-import {FluidRegistry} from './fluid_registry';
+import {FluidRegistry} from '../manager/fluid_registry';
 import {ItemKey}       from './item_types';
 
 //@ts-ignore

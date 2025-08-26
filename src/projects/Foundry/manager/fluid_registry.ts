@@ -1,4 +1,4 @@
-import {FluidResource} from './fluid_types';
+import {FluidResource} from '../APIs/fluid_types';
 
 export const FluidRegistry = {
 	MOLTEN_BAOLIAN: {

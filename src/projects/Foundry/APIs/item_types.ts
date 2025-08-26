@@ -1,5 +1,5 @@
 import {FluidKey}      from './fluid_types';
-import {MeltableItems} from './item_registry';
+import {MeltableItems} from '../manager/item_registry';
 
 //@ts-ignore
 export type ItemKey = keyof typeof MeltableItems;

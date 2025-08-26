@@ -1,10 +1,13 @@
 import {RednetReceiverHelper, RednetSenderHelper}         from '../../../APIs/rednet_utils';
-import {UnitOfMeasure}                                    from './fluid_enums';
+import {UnitOfMeasure}                                    from '../APIs/fluid_enums';
 import {FluidRegistry}                                    from './fluid_registry';
-import {UnitMeasureType}                                  from './fluid_types';
-import {SmelteryMode, SmelteryStatus}                     from './smeltery_enums';
-import {PlanedAction, SmelteryActionBatch, SmelteryState} from './smeltery_types';
+import {UnitMeasureType}                                  from '../APIs/fluid_types';
+import {SmelteryMode, SmelteryStatus}                     from '../APIs/smeltery_enums';
+import {PlanedAction, SmelteryActionBatch, SmelteryState} from '../APIs/smeltery_types';
 
+/**
+ * Configuration constants for the Smeltery system
+ */
 const CONFIG = {
 	PERIPHERALS: {
 		MODEM_SIDE: 'left',
@@ -15,14 +18,38 @@ const CONFIG = {
 	},
 } as const;
 
+/**
+ * Manages a Tinkers' Construct smeltery, handling fluid processing, item melting,
+ * and casting operations based on different operational modes.
+ */
 export class Smeltery {
+	/** Handles receiving messages over rednet */
 	private rednetReceiver: RednetReceiverHelper;
-	private rednetSender: RednetSenderHelper;
-	private readonly size: number;
-	private state: SmelteryState;
-	private readonly interfaceId: number; // the one who actually interacts (move fluid, insert item, ...) with the smeltery, get info from it
-	private readonly frontendId: number; // the one who displays information from this gateway, send action from the user to this gateway
 
+	/** Handles sending messages over rednet */
+	private rednetSender: RednetSenderHelper;
+
+	/** The size of the smeltery (width * depth * height) */
+	private readonly size: number;
+
+	/** Current state of the smeltery including fluids, items, and operational status */
+	private state: SmelteryState;
+
+	/** ID of the computer that interfaces directly with the smeltery */
+	private readonly interfaceId: number;
+
+	/** ID of the computer that displays information and receives user commands */
+	private readonly frontendId: number;
+
+	/**
+	 * Creates a new Smeltery manager
+	 *
+	 * @param innerWidth - Internal width of the smeltery
+	 * @param innerDepth - Internal depth of the smeltery
+	 * @param innerHeight - Internal height of the smeltery
+	 * @param interfaceId - ID of the computer that interfaces with the smeltery
+	 * @param frontendId - ID of the computer that displays information
+	 */
 	constructor(innerWidth: number, innerDepth: number, innerHeight: number, interfaceId: number, frontendId: number) {
 		this.initializePeripherals();
 		this.size = innerWidth * innerDepth * innerHeight;
@@ -53,15 +80,259 @@ export class Smeltery {
 		// TODO: Add listeners for other commands
 	}
 
+	/**
+	 * Initializes the peripheral connections needed for communication
+	 */
 	private initializePeripherals(): void {
 		const modem = peripheral.wrap(CONFIG.PERIPHERALS.MODEM_SIDE) as ModemPeripheral || error('No modem found');
 		this.rednetReceiver = new RednetReceiverHelper(modem);
 		this.rednetSender = new RednetSenderHelper(modem);
 	}
 
+	/**
+	 * Updates the smeltery status and notifies the frontend
+	 *
+	 * @param newStatus - The new status to set
+	 */
 	private updateStatus(newStatus: SmelteryStatus): void {
 		this.rednetSender.put(this.frontendId, 'smelteryStatus', {status: newStatus});
 		this.state.status = newStatus;
+	}
+
+	/**
+	 * Creates batches of actions from a list of planned actions
+	 *
+	 * @param actions - List of planned actions to batch
+	 * @returns Batched actions according to MAX_ACTIONS_PER_BATCH
+	 */
+	private createActionBatches(actions: PlanedAction[]): SmelteryActionBatch {
+		const batches: SmelteryActionBatch = [];
+
+		for (let i = 0; i < actions.length; i += CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH) {
+			batches.push(actions.slice(i, i + CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH));
+		}
+
+		return batches;
+	}
+
+	/**
+	 * Processes fluid based on the current smeltery mode and available cast types
+	 *
+	 * @param fluidResource - The fluid resource to process
+	 * @param fluidAmount - Amount of fluid to process
+	 * @param expectedState - Current expected state of the smeltery
+	 * @param actions - List to add new actions to
+	 * @returns Remaining fluid amount after processing
+	 */
+	private processFluidBasedOnMode(
+		fluidResource: string,
+		fluidAmount: number,
+		expectedState: Partial<SmelteryState>,
+		actions: PlanedAction[],
+	): number {
+		let remainingFluid = fluidAmount;
+		const availableUnits: UnitMeasureType[] = FluidRegistry[fluidResource].availableUnits;
+
+		// Sort units by cost (largest first)
+		availableUnits.sort((a: UnitMeasureType, b: UnitMeasureType) =>
+			UnitOfMeasure[b].costInMilliBucket - UnitOfMeasure[a].costInMilliBucket);
+
+		// Filter cast types based on mode
+		const eligibleCastTypes = this.getEligibleCastTypes(availableUnits, expectedState.mode);
+
+		// Process each eligible cast type
+		for (const castType of eligibleCastTypes) {
+			if (UnitOfMeasure[castType].hasCast) {
+				const count = math.floor(remainingFluid / UnitOfMeasure[castType].costInMilliBucket);
+
+				if (count > 0) {
+					const amountToUse = count * UnitOfMeasure[castType].costInMilliBucket;
+
+					// Update fluid amounts
+					this.updateFluidAmounts(fluidResource, amountToUse, expectedState, false);
+
+					// Add cast action
+					actions.push({
+						action: {
+							type: 'CAST',
+							fluidName: fluidResource,
+							amount: amountToUse,
+							castType: castType,
+						},
+						expectedState: {...expectedState},
+					});
+
+					remainingFluid -= amountToUse;
+				}
+			}
+		}
+
+		return remainingFluid;
+	}
+
+	/**
+	 * Gets eligible cast types based on the smeltery mode
+	 *
+	 * @param availableUnits - All available unit types for the fluid
+	 * @param mode - Current smeltery mode
+	 * @returns Filtered list of eligible cast types
+	 */
+	private getEligibleCastTypes(availableUnits: UnitMeasureType[], mode: SmelteryMode): UnitMeasureType[] {
+		switch (mode) {
+			case SmelteryMode.AUTO_NO_BLOCK:
+				return availableUnits.filter(unit => unit !== 'BLOCK');
+
+			case SmelteryMode.AUTO_INGOTS_ONLY:
+				return availableUnits.filter(unit => unit === 'INGOT' || unit === 'GEM');
+
+			case SmelteryMode.MANUAL:
+			case SmelteryMode.AUTO_LARGEST:
+			case SmelteryMode.BALANCED_ALLOY:
+			default:
+				return availableUnits;
+		}
+	}
+
+	/**
+	 * Updates fluid amounts in the expected state
+	 *
+	 * @param fluidResource - The fluid resource to update
+	 * @param amount - Amount to add (positive) or remove (negative)
+	 * @param expectedState - State to update
+	 * @param isAddition - Whether this is adding (true) or removing (false) fluid
+	 */
+	private updateFluidAmounts(
+		fluidResource: string,
+		amount: number,
+		expectedState: Partial<SmelteryState>,
+		isAddition: boolean,
+	): void {
+		if (isAddition) {
+			expectedState.fluidInAmount += amount;
+
+			const existingFluid = expectedState.fluidIn.find(fluid => fluid.fluidResource === fluidResource);
+			if (existingFluid) {
+				existingFluid.fluidAmount += amount;
+			} else {
+				expectedState.fluidIn.push({
+					fluidCapacity: 0,
+					fluidAmount: amount,
+					fluidResource: fluidResource,
+				});
+			}
+		} else {
+			expectedState.fluidInAmount -= amount;
+
+			const existingFluid = expectedState.fluidIn.find(fluid => fluid.fluidResource === fluidResource);
+			if (existingFluid) {
+				existingFluid.fluidAmount -= amount;
+
+				// Remove the fluid entry if amount is zero
+				if (existingFluid.fluidAmount <= 0) {
+					expectedState.fluidIn = expectedState.fluidIn.filter(
+						fluid => fluid.fluidResource !== fluidResource,
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Handles transferring fluid between the smeltery and residue tanks
+	 *
+	 * @param fluidResource - The fluid resource to transfer
+	 * @param amount - Amount to transfer
+	 * @param expectedState - Current expected state
+	 * @param actions - List to add new actions to
+	 * @param toSmeltery - Direction of transfer (true = to smeltery, false = to tank)
+	 */
+	private transferFluid(
+		fluidResource: string,
+		amount: number,
+		expectedState: Partial<SmelteryState>,
+		actions: PlanedAction[],
+		toSmeltery: boolean,
+	): void {
+		if (toSmeltery) {
+			// Transfer from tank to smeltery
+			const tank = expectedState.residueTanksDetails.find(tank => tank.fluidResource === fluidResource);
+			if (tank) {
+				tank.fluidAmount -= amount;
+
+				// Remove tank if empty
+				if (tank.fluidAmount <= 0) {
+					expectedState.residueTanksDetails = expectedState.residueTanksDetails.filter(
+						t => t.fluidResource !== fluidResource,
+					);
+				}
+
+				this.updateFluidAmounts(fluidResource, amount, expectedState, true);
+
+				actions.push({
+					action: {
+						type: 'INSERT_FLUID',
+						fluidName: fluidResource,
+						amount: amount,
+					},
+					expectedState: {...expectedState},
+				});
+			}
+		} else {
+			// Transfer from smeltery to tank
+			this.updateFluidAmounts(fluidResource, amount, expectedState, false);
+
+			let remainingAmount = amount;
+
+			// First, try to add to an existing tank with the same fluid
+			const tank = expectedState.residueTanksDetails.find(tank => tank.fluidResource === fluidResource);
+			if (tank) {
+				// Calculate how much can fit in this tank
+				const availableSpace = tank.fluidCapacity - tank.fluidAmount;
+				const amountToAdd = Math.min(remainingAmount, availableSpace);
+
+				// Add fluid to the tank
+				tank.fluidAmount += amountToAdd;
+				remainingAmount -= amountToAdd;
+			}
+
+			// If there's still fluid left, try to find another tank or create a new one
+			if (remainingAmount > 0) {
+				// Try to find another tank with the same fluid that has space
+				const anotherTank = expectedState.residueTanksDetails.find(t => 
+					t.fluidResource === fluidResource && 
+					t !== tank && 
+					t.fluidAmount < t.fluidCapacity
+				);
+
+				if (anotherTank) {
+					// Calculate how much can fit in this tank
+					const availableSpace = anotherTank.fluidCapacity - anotherTank.fluidAmount;
+					const amountToAdd = Math.min(remainingAmount, availableSpace);
+
+					// Add fluid to the tank
+					anotherTank.fluidAmount += amountToAdd;
+					remainingAmount -= amountToAdd;
+				}
+
+				// If there's still fluid left, create a new tank
+				if (remainingAmount > 0) {
+					expectedState.residueTanksDetails.push({
+						fluidCapacity: CONFIG.SMELTERY.BASE_TANK_CAPACITY,
+						fluidAmount: remainingAmount,
+						fluidResource: fluidResource,
+					});
+				}
+			}
+
+			actions.push({
+				action: {
+					type: 'EXTRACT_FLUID',
+					fluidName: fluidResource,
+					amount: amount,
+				},
+				expectedState: {...expectedState},
+			});
+		}
 	}
 
 	/**
@@ -108,285 +379,27 @@ export class Smeltery {
 		return actions;
 	}
 
+	/**
+	 * Processes all items and fluids in the smeltery, emptying it according to the current mode
+	 * @returns A batch of actions to execute
+	 */
 	private dump(): SmelteryActionBatch {
 		const actions: PlanedAction[] = [];
 		const expectedState = {...this.state};
 
-		const hasItems = expectedState.itemsIn.length > 0;
-		if (hasItems) {
-			for (const item of expectedState.itemsIn) {
-				expectedState.itemsIn = [];
-				expectedState.fluidInAmount += item.fluidAmountAfterMelting;
-				if (expectedState.fluidIn.find((fluid) => fluid.fluidResource === item.fluidResource)) {
-					expectedState.fluidIn.find((fluid) => fluid.fluidResource === item.fluidResource)!.fluidAmount += item.fluidAmountAfterMelting;
-				} else {
-					expectedState.fluidIn.push({
-						fluidCapacity: 0,
-						fluidAmount: item.fluidAmountAfterMelting,
-						fluidResource: item.fluidResource,
-					});
-				}
-			}
-			actions.push({
-				action: {
-					type: 'WAIT_MELTING',
-				},
-				expectedState: expectedState,
-			});
+		// Process items in the smeltery
+		if (expectedState.itemsIn.length > 0) {
+			this.processItems(expectedState, actions);
 		}
 
-		const hasFluid = expectedState.fluidIn.length > 0;
-		if (hasFluid) {
-			for (const fluid of expectedState.fluidIn) {
-				let fluidToDump = fluid.fluidAmount;
-				const availableUnits: UnitMeasureType[] = FluidRegistry[fluid.fluidResource].availableUnits;
-				availableUnits.sort((a: UnitMeasureType, b: UnitMeasureType) => UnitOfMeasure[b].costInMilliBucket - UnitOfMeasure[a].costInMilliBucket);
-				switch (expectedState.mode) {
-					case SmelteryMode.MANUAL:
-					case SmelteryMode.AUTO_LARGEST:
-					case SmelteryMode.BALANCED_ALLOY:
-						for (const cast of availableUnits) {
-							if (UnitOfMeasure[cast].hasCast) {
-								const count = math.floor(fluidToDump / UnitOfMeasure[cast].costInMilliBucket);
-								if (count > 0) {
-									expectedState.fluidInAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-									expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-									actions.push({
-										action: {
-											type: 'CAST',
-											fluidName: fluid,
-											amount: count * UnitOfMeasure[cast].costInMilliBucket,
-											castType: cast,
-										},
-										expectedState: expectedState,
-									});
-									fluidToDump -= count * UnitOfMeasure[cast].costInMilliBucket;
-								}
-							}
-						}
-						break;
-					case SmelteryMode.AUTO_NO_BLOCK:
-						for (const cast of availableUnits) {
-							if (cast !== 'BLOCK') {
-								for (const cast of availableUnits) {
-									if (UnitOfMeasure[cast].hasCast) {
-										const count = math.floor(fluidToDump / UnitOfMeasure[cast].costInMilliBucket);
-										if (count > 0) {
-											expectedState.fluidInAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											actions.push({
-												action: {
-													type: 'CAST',
-													fluidName: fluid,
-													amount: count * UnitOfMeasure[cast].costInMilliBucket,
-													castType: cast,
-												},
-												expectedState: expectedState,
-											});
-											fluidToDump -= count * UnitOfMeasure[cast].costInMilliBucket;
-										}
-									}
-								}
-							}
-						}
-						break;
-					case SmelteryMode.AUTO_INGOTS_ONLY:
-						for (const cast of availableUnits) {
-							if (cast == 'INGOT' || cast == 'GEM') {
-								for (const cast of availableUnits) {
-									if (UnitOfMeasure[cast].hasCast) {
-										const count = math.floor(fluidToDump / UnitOfMeasure[cast].costInMilliBucket);
-										if (count > 0) {
-											expectedState.fluidInAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											actions.push({
-												action: {
-													type: 'CAST',
-													fluidName: fluid,
-													amount: count * UnitOfMeasure[cast].costInMilliBucket,
-													castType: cast,
-												},
-												expectedState: expectedState,
-											});
-											fluidToDump -= count * UnitOfMeasure[cast].costInMilliBucket;
-										}
-									}
-								}
-							}
-						}
-						break;
-					default:
-						this.state.status = SmelteryStatus.ERROR;
-						return [];
-				}
-
-				if (fluidToDump > 0) {
-					expectedState.fluidInAmount -= fluidToDump;
-					expectedState.fluidIn = expectedState.fluidIn.filter((fluidToCheck) => fluidToCheck.fluidResource !== fluid.fluidResource);
-					const tank = expectedState.residueTanksDetails.find((tank) => tank.fluidResource === fluid.fluidResource);
-					if (tank) {
-						tank.fluidAmount += fluidToDump;
-					} else {
-						expectedState.residueTanksDetails.push({
-							fluidCapacity: CONFIG.SMELTERY.BASE_TANK_CAPACITY,
-							fluidAmount: fluidToDump,
-							fluidResource: fluid.fluidResource,
-						});
-					}
-					actions.push({
-						action: {
-							type: 'EXTRACT_FLUID',
-							fluidName: fluid.fluidResource,
-							amount: fluidToDump,
-						},
-						expectedState: expectedState,
-					});
-				}
-			}
+		// Process fluids in the smeltery
+		if (expectedState.fluidIn.length > 0) {
+			this.processFluids(expectedState, actions, true); // Always transfer to residue tanks in dump mode
 		}
 
-		const hasResidueInTank = expectedState.residueTanksDetails.length > 0;
-		if (hasResidueInTank) {
-			for (const fluid of expectedState.residueTanksDetails) {
-				let fluidToDump = fluid.fluidAmount;
-				const availableUnits: UnitMeasureType[] = FluidRegistry[fluid.fluidResource].availableUnits;
-				availableUnits.sort((a: UnitMeasureType, b: UnitMeasureType) => UnitOfMeasure[b].costInMilliBucket - UnitOfMeasure[a].costInMilliBucket);
-				switch (expectedState.mode) {
-					case SmelteryMode.MANUAL:
-					case SmelteryMode.AUTO_LARGEST:
-					case SmelteryMode.BALANCED_ALLOY:
-						for (const cast of availableUnits) {
-							if (UnitOfMeasure[cast].hasCast) {
-								const count = math.floor(fluidToDump / UnitOfMeasure[cast].costInMilliBucket);
-								if (count > 0) {
-									expectedState.residueTanksDetails.find((tank) => tank.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-									expectedState.fluidInAmount += count * UnitOfMeasure[cast].costInMilliBucket;
-									if (expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)) {
-										expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount += count * UnitOfMeasure[cast].costInMilliBucket;
-									} else {
-										expectedState.fluidIn.push({
-											fluidCapacity: 0,
-											fluidAmount: count * UnitOfMeasure[cast].costInMilliBucket,
-											fluidResource: fluid.fluidResource,
-										});
-									}
-									actions.push({
-										action: {
-											type: 'INSERT_FLUID',
-											fluidName: fluid.fluidResource,
-											amount: count * UnitOfMeasure[cast].costInMilliBucket,
-										},
-										expectedState: expectedState,
-									});
-									expectedState.fluidInAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-									expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-									actions.push({
-										action: {
-											type: 'CAST',
-											fluidName: fluid,
-											amount: count * UnitOfMeasure[cast].costInMilliBucket,
-											castType: cast,
-										},
-										expectedState: expectedState,
-									});
-									fluidToDump -= count * UnitOfMeasure[cast].costInMilliBucket;
-								}
-							}
-						}
-						break;
-					case SmelteryMode.AUTO_NO_BLOCK:
-						for (const cast of availableUnits) {
-							if (cast !== 'BLOCK') {
-								for (const cast of availableUnits) {
-									if (UnitOfMeasure[cast].hasCast) {
-										const count = math.floor(fluidToDump / UnitOfMeasure[cast].costInMilliBucket);
-										if (count > 0) {
-											expectedState.residueTanksDetails.find((tank) => tank.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											expectedState.fluidInAmount += count * UnitOfMeasure[cast].costInMilliBucket;
-											if (expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)) {
-												expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount += count * UnitOfMeasure[cast].costInMilliBucket;
-											} else {
-												expectedState.fluidIn.push({
-													fluidCapacity: 0,
-													fluidAmount: count * UnitOfMeasure[cast].costInMilliBucket,
-													fluidResource: fluid.fluidResource,
-												});
-											}
-											actions.push({
-												action: {
-													type: 'INSERT_FLUID',
-													fluidName: fluid.fluidResource,
-													amount: count * UnitOfMeasure[cast].costInMilliBucket,
-												},
-												expectedState: expectedState,
-											});
-											expectedState.fluidInAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											actions.push({
-												action: {
-													type: 'CAST',
-													fluidName: fluid,
-													amount: count * UnitOfMeasure[cast].costInMilliBucket,
-													castType: cast,
-												},
-												expectedState: expectedState,
-											});
-											fluidToDump -= count * UnitOfMeasure[cast].costInMilliBucket;
-										}
-									}
-								}
-							}
-						}
-						break;
-					case SmelteryMode.AUTO_INGOTS_ONLY:
-						for (const cast of availableUnits) {
-							if (cast == 'INGOT' || cast == 'GEM') {
-								for (const cast of availableUnits) {
-									if (UnitOfMeasure[cast].hasCast) {
-										const count = math.floor(fluidToDump / UnitOfMeasure[cast].costInMilliBucket);
-										if (count > 0) {
-											expectedState.residueTanksDetails.find((tank) => tank.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											expectedState.fluidInAmount += count * UnitOfMeasure[cast].costInMilliBucket;
-											if (expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)) {
-												expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount += count * UnitOfMeasure[cast].costInMilliBucket;
-											} else {
-												expectedState.fluidIn.push({
-													fluidCapacity: 0,
-													fluidAmount: count * UnitOfMeasure[cast].costInMilliBucket,
-													fluidResource: fluid.fluidResource,
-												});
-											}
-											actions.push({
-												action: {
-													type: 'INSERT_FLUID',
-													fluidName: fluid.fluidResource,
-													amount: count * UnitOfMeasure[cast].costInMilliBucket,
-												},
-												expectedState: expectedState,
-											});
-											expectedState.fluidInAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											expectedState.fluidIn.find((fluid) => fluid.fluidResource === fluid.fluidResource)!.fluidAmount -= count * UnitOfMeasure[cast].costInMilliBucket;
-											actions.push({
-												action: {
-													type: 'CAST',
-													fluidName: fluid,
-													amount: count * UnitOfMeasure[cast].costInMilliBucket,
-													castType: cast,
-												},
-												expectedState: expectedState,
-											});
-											fluidToDump -= count * UnitOfMeasure[cast].costInMilliBucket;
-										}
-									}
-								}
-							}
-						}
-						break;
-					default:
-						this.state.status = SmelteryStatus.ERROR;
-						return [];
-				}
-			}
+		// Process residue in tanks
+		if (expectedState.residueTanksDetails.length > 0) {
+			this.processResidueTanks(expectedState, actions);
 		}
 
 		// The smeltery should be empty now, and the fluid should be in the residue tank
@@ -402,13 +415,130 @@ export class Smeltery {
 				itemsIn: [],
 			},
 		});
-		const toReturn: SmelteryActionBatch = [];
 
-		for (let i = 0; i < actions.length; i += CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH) {
-			toReturn.push(actions.slice(i, i + CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH));
+		return this.createActionBatches(actions);
+	}
+
+	/**
+	 * Processes items in the smeltery, melting them into fluids
+	 *
+	 * @param expectedState - Current expected state
+	 * @param actions - List to add new actions to
+	 */
+	private processItems(expectedState: Partial<SmelteryState>, actions: PlanedAction[]): void {
+		for (const item of expectedState.itemsIn) {
+			expectedState.itemsIn = [];
+			expectedState.fluidInAmount += item.fluidAmountAfterMelting;
+
+			const existingFluid = expectedState.fluidIn.find(fluid => fluid.fluidResource === item.fluidResource);
+			if (existingFluid) {
+				existingFluid.fluidAmount += item.fluidAmountAfterMelting;
+			} else {
+				expectedState.fluidIn.push({
+					fluidCapacity: 0,
+					fluidAmount: item.fluidAmountAfterMelting,
+					fluidResource: item.fluidResource,
+				});
+			}
 		}
 
-		return toReturn;
+		actions.push({
+			action: {
+				type: 'WAIT_MELTING',
+			},
+			expectedState: expectedState,
+		});
+	}
+
+	/**
+	 * Processes fluids in the smeltery, casting them or optionally moving to residue tanks
+	 *
+	 * @param expectedState - Current expected state
+	 * @param actions - List to add new actions to
+	 * @param transferToResidueTank - Whether to transfer remaining fluid to residue tanks (default: true)
+	 */
+	private processFluids(
+		expectedState: Partial<SmelteryState>,
+		actions: PlanedAction[],
+		transferToResidueTank: boolean = true,
+	): void {
+		for (const fluid of expectedState.fluidIn) {
+			let remainingFluid = fluid.fluidAmount;
+
+			// Process fluid based on mode and available cast types
+			remainingFluid = this.processFluidBasedOnMode(
+				fluid.fluidResource,
+				remainingFluid,
+				expectedState,
+				actions,
+			);
+
+			// If there's still fluid left and transfer to residue tank is enabled, move it to a residue tank
+			if (remainingFluid > 0 && transferToResidueTank) {
+				this.transferFluid(
+					fluid.fluidResource,
+					remainingFluid,
+					expectedState,
+					actions,
+					false, // from smeltery to tank
+				);
+			}
+		}
+	}
+
+	/**
+	 * Processes fluids in residue tanks, moving them to the smeltery for casting
+	 *
+	 * @param expectedState - Current expected state
+	 * @param actions - List to add new actions to
+	 */
+	private processResidueTanks(expectedState: Partial<SmelteryState>, actions: PlanedAction[]): void {
+		for (const fluid of expectedState.residueTanksDetails) {
+			let fluidToDump = fluid.fluidAmount;
+			const availableUnits: UnitMeasureType[] = FluidRegistry[fluid.fluidResource].availableUnits;
+
+			// Sort units by cost (largest first)
+			availableUnits.sort((a: UnitMeasureType, b: UnitMeasureType) =>
+				UnitOfMeasure[b].costInMilliBucket - UnitOfMeasure[a].costInMilliBucket);
+
+			// Filter cast types based on mode
+			const eligibleCastTypes = this.getEligibleCastTypes(availableUnits, expectedState.mode);
+
+			// Process each eligible cast type
+			for (const castType of eligibleCastTypes) {
+				if (UnitOfMeasure[castType].hasCast) {
+					const count = math.floor(fluidToDump / UnitOfMeasure[castType].costInMilliBucket);
+
+					if (count > 0) {
+						const amountToUse = count * UnitOfMeasure[castType].costInMilliBucket;
+
+						// Transfer fluid from tank to smeltery
+						this.transferFluid(
+							fluid.fluidResource,
+							amountToUse,
+							expectedState,
+							actions,
+							true, // to smeltery
+						);
+
+						// Cast the fluid
+						this.updateFluidAmounts(fluid.fluidResource, amountToUse, expectedState, false);
+
+						actions.push({
+							action: {
+								type: 'CAST',
+								fluidName: fluid.fluidResource,
+								amount: amountToUse,
+								castType: castType,
+							},
+							expectedState: {...expectedState},
+						});
+
+						fluidToDump -= amountToUse;
+					}
+				}
+			}
+		}
 	}
 
 	/**
@@ -421,15 +551,9 @@ export class Smeltery {
 		const actions: PlanedAction[] = [];
 		const expectedState = {...this.state};
 
-		// TODO
+		// TODO: Implement AUTO_LARGEST mode logic
 
-		const toReturn: SmelteryActionBatch = [];
-
-		for (let i = 0; i < actions.length; i += CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH) {
-			toReturn.push(actions.slice(i, i + CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH));
-		}
-
-		return toReturn;
+		return this.createActionBatches(actions);
 	}
 
 	/**
@@ -442,15 +566,9 @@ export class Smeltery {
 		const actions: PlanedAction[] = [];
 		const expectedState = {...this.state};
 
-		// TODO
+		// TODO: Implement AUTO_NO_BLOCK mode logic
 
-		const toReturn: SmelteryActionBatch = [];
-
-		for (let i = 0; i < actions.length; i += CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH) {
-			toReturn.push(actions.slice(i, i + CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH));
-		}
-
-		return toReturn;
+		return this.createActionBatches(actions);
 	}
 
 	/**
@@ -464,15 +582,9 @@ export class Smeltery {
 		const actions: PlanedAction[] = [];
 		const expectedState = {...this.state};
 
-		// TODO
+		// TODO: Implement AUTO_INGOTS_ONLY mode logic
 
-		const toReturn: SmelteryActionBatch = [];
-
-		for (let i = 0; i < actions.length; i += CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH) {
-			toReturn.push(actions.slice(i, i + CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH));
-		}
-
-		return toReturn;
+		return this.createActionBatches(actions);
 	}
 
 	/**
@@ -485,14 +597,8 @@ export class Smeltery {
 		const actions: PlanedAction[] = [];
 		const expectedState = {...this.state};
 
-		// TODO
+		// TODO: Implement BALANCED_ALLOY mode logic
 
-		const toReturn: SmelteryActionBatch = [];
-
-		for (let i = 0; i < actions.length; i += CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH) {
-			toReturn.push(actions.slice(i, i + CONFIG.SMELTERY.MAX_ACTIONS_PER_BATCH));
-		}
-
-		return toReturn;
+		return this.createActionBatches(actions);
 	}
 }
