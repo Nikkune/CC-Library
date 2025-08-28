@@ -1,9 +1,11 @@
 import {RednetReceiverHelper, RednetSenderHelper}         from '../../../APIs/rednet_utils';
 import {UnitOfMeasure}                                    from '../APIs/fluid_enums';
+import {ItemResource}                                     from '../APIs/item_types';
 import {FluidRegistry}                                    from './fluid_registry';
 import {UnitMeasureType}                                  from '../APIs/fluid_types';
 import {SmelteryMode, SmelteryStatus}                     from '../APIs/smeltery_enums';
 import {PlanedAction, SmelteryActionBatch, SmelteryState} from '../APIs/smeltery_types';
+import {MeltableItems}                                    from './item_registry';
 
 /**
  * Configuration constants for the Smeltery system
@@ -427,17 +429,18 @@ export class Smeltery {
 	 */
 	private processItems(expectedState: Partial<SmelteryState>, actions: PlanedAction[]): void {
 		for (const item of expectedState.itemsIn) {
+			const itemDetails: ItemResource = MeltableItems[item];
 			expectedState.itemsIn = [];
-			expectedState.fluidInAmount += item.fluidAmountAfterMelting;
+			expectedState.fluidInAmount += itemDetails.fluidAmountAfterMelting;
 
-			const existingFluid = expectedState.fluidIn.find(fluid => fluid.fluidResource === item.fluidResource);
+			const existingFluid = expectedState.fluidIn.find(fluid => fluid.fluidResource === itemDetails.fluidResource);
 			if (existingFluid) {
-				existingFluid.fluidAmount += item.fluidAmountAfterMelting;
+				existingFluid.fluidAmount += itemDetails.fluidAmountAfterMelting;
 			} else {
 				expectedState.fluidIn.push({
 					fluidCapacity: 0,
-					fluidAmount: item.fluidAmountAfterMelting,
-					fluidResource: item.fluidResource,
+					fluidAmount: itemDetails.fluidAmountAfterMelting,
+					fluidResource: itemDetails.fluidResource,
 				});
 			}
 		}

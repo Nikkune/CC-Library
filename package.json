@@ -2,13 +2,16 @@
   "name": "cc-lib",
   "version": "1.113.1",
   "scripts": {
-    "build": "tstl"
+    "build": "tstl && npx tsc src/fix-apis.ts --outDir dist && node dist/fix-apis.js"
   },
   "devDependencies": {
-    "typescript": "^5.1.0",
+    "@jackmacwindows/cc-types": "file:lib/cc_types/cc",
+    "@jackmacwindows/craftos-types": "file:lib/cc_types/craftos",
     "@jackmacwindows/lua-types": "^2.13.2",
     "@jackmacwindows/typescript-to-lua": "^1.22.0",
-    "@jackmacwindows/craftos-types": "file:lib/cc_types/craftos",
-    "@jackmacwindows/cc-types": "file:lib/cc_types/cc"
+    "typescript": "^5.1.0"
+  },
+  "dependencies": {
+    "@types/node": "^24.3.0"
   }
 }
