@@ -1,10 +1,10 @@
 import {RednetReceiverHelper, RednetSenderHelper}         from '../../../APIs/rednet_utils';
 import {UnitOfMeasure}                                    from '../APIs/fluid_enums';
-import {ItemResource}                                     from '../APIs/item_types';
-import {FluidRegistry}                                    from './fluid_registry';
 import {UnitMeasureType}                                  from '../APIs/fluid_types';
+import {ItemKey, ItemResource}                            from '../APIs/item_types';
 import {SmelteryMode, SmelteryStatus}                     from '../APIs/smeltery_enums';
 import {PlanedAction, SmelteryActionBatch, SmelteryState} from '../APIs/smeltery_types';
+import {FluidRegistry}                                    from './fluid_registry';
 import {MeltableItems}                                    from './item_registry';
 
 /**
@@ -300,10 +300,10 @@ export class Smeltery {
 			// If there's still fluid left, try to find another tank or create a new one
 			if (remainingAmount > 0) {
 				// Try to find another tank with the same fluid that has space
-				const anotherTank = expectedState.residueTanksDetails.find(t => 
-					t.fluidResource === fluidResource && 
-					t !== tank && 
-					t.fluidAmount < t.fluidCapacity
+				const anotherTank = expectedState.residueTanksDetails.find(t =>
+					t.fluidResource === fluidResource &&
+					t !== tank &&
+					t.fluidAmount < t.fluidCapacity,
 				);
 
 				if (anotherTank) {
@@ -541,6 +541,33 @@ export class Smeltery {
 					}
 				}
 			}
+		}
+	}
+
+	/**
+	 * Inserts a given list of items into the smeltery if sufficient capacity is available.
+	 *
+	 * @param {Array<{item: ItemKey, amount: number}>} items - The list of items to be inserted, including their identifiers and amounts.
+	 * @param {Partial<SmelteryState>} expectedState - The expected state of the smeltery after the items are inserted.
+	 * @param {PlanedAction[]} actions - A list of planned actions to be updated with the insertion details.
+	 */
+	private insertItems(items: { item: ItemKey, amount: number }[], expectedState: Partial<SmelteryState>, actions: PlanedAction[]): void {
+		const totalAmount = items.reduce((acc, item) => acc + item.amount, 0);
+		if (totalAmount > this.state.itemInCapacity) {
+			error('Cannot insert items, not enough space in the smeltery');
+		}
+		for (const item of items) {
+			expectedState.itemInAmount += item.amount;
+			const itemList: ItemKey[] = Array(item.amount).fill(item.item);
+			expectedState.itemsIn.push(...itemList);
+			actions.push({
+				action: {
+					type: 'INSERT_ITEM',
+					itemName: item.item,
+					amount: item.amount,
+				},
+				expectedState: {...expectedState},
+			});
 		}
 	}
 
